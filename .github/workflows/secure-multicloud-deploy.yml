@@ -1,0 +1,152 @@
+name: Secure Build and Multi-Cloud Deployment
+
+on:
+  push:
+    branches:
+      - engineers
+      - dev
+  pull_request:
+    branches:
+      - dev
+
+env:
+  JAVA_VERSION: '17'
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+jobs:
+
+  scan-secrets:
+    name: Scan for Secrets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Gitleaks
+        id: gitleaks
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          fail: true
+
+      - name: Fail if secrets found
+        if: steps.gitleaks.outcome == 'failure'
+        run: |
+          echo "❌ Secrets found, failing the workflow."
+          exit 1
+
+      - name: Notify Slack on Secret Detection Failure
+        if: steps.gitleaks.outcome == 'failure'
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🔐 *Secret scan failed!* Secrets found in `${{ github.repository }}` at `${{ github.ref_name }}`."}' \
+          $SLACK_WEBHOOK_URL
+
+  build-java:
+    name: Build Java Project
+    runs-on: ubuntu-latest
+    needs: scan-secrets
+    if: github.ref == 'refs/heads/engineers'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Build with Maven
+        run: mvn clean install
+
+  deploy-dev:
+    name: Deploy to AWS, GCP, Azure
+    runs-on: ubuntu-latest
+    needs: scan-secrets
+    if: github.ref == 'refs/heads/dev'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Build Java Project
+        run: mvn clean package
+
+      ####################
+      ## AWS Deployment ##
+      ####################
+      - name: Configure AWS CLI
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to AWS
+        run: |
+          echo "Deploying to AWS..."
+          # Replace with actual deployment (e.g., ECS, EB, S3)
+          aws s3 cp target/*.jar s3://your-bucket-name/
+
+      ####################
+      ## GCP Deployment ##
+      ####################
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Deploy to GCP
+        run: |
+          echo "Deploying to GCP..."
+          # Replace with actual deployment, e.g., GKE or Cloud Run
+
+      #####################
+      ## Azure Deployment ##
+      #####################
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure
+        run: |
+          echo "Deploying to Azure..."
+          # Replace with actual deployment, e.g., Azure App Service CLI
+
+  alert-on-failure:
+    name: Alert on Failure
+    if: failure()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Slack Notification
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Build/Deploy failed* in `${{ github.workflow }}` on branch `${{ github.ref_name }}`."}' \
+          $SLACK_WEBHOOK_URL
+
+      - name: Send Email Alert
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.yourdomain.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "🚨 GitHub Action Failed: ${{ github.repository }}"
+          to: recipient@example.com
+          from: "GitHub Alert <noreply@yourdomain.com>"
+          body: |
+            Hello,
+
+            The GitHub Actions workflow `${{ github.workflow }}` failed on branch `${{ github.ref_name }}`.
+            Please check the logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
