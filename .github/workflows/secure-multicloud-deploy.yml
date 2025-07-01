@@ -30,17 +30,18 @@ jobs:
         with:
           fail: true
 
-      - name: Fail if secrets found
+      - name: Set Failure Context if Secrets Found
         if: steps.gitleaks.outcome == 'failure'
         run: |
-          echo "❌ Secrets found, failing the workflow."
+          echo "🔐 Secret scan failed – credentials or tokens exposed" >> $GITHUB_STEP_SUMMARY
+          echo "reason=Secrets Detected in Code" >> $GITHUB_ENV
           exit 1
 
       - name: Notify Slack on Secret Detection Failure
         if: steps.gitleaks.outcome == 'failure'
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data '{"text":"🔐 *Secret scan failed!* Secrets found in `${{ github.repository }}` at `${{ github.ref_name }}`."}' \
+          --data "{\"text\":\"🔐 *Secret scan failed!* Secrets found in \`${{ github.repository }}\` on branch \`${{ github.ref_name }}\`.\n🔗 View logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
           $SLACK_WEBHOOK_URL
 
   build-java:
@@ -59,8 +60,18 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
 
-      - name: Build with Maven
-        run: mvn clean install
+      - name: Build with Maven (Verbose)
+        id: maven_build
+        run: |
+          echo "::group::Running mvn clean install with debug output"
+          mvn --batch-mode clean install -e -X
+          echo "::endgroup::"
+
+      - name: Set Failure Context if Build Fails
+        if: failure()
+        run: |
+          echo "❌ Java build failed on 'engineers' branch" >> $GITHUB_STEP_SUMMARY
+          echo "reason=Java Build Failed in engineers branch" >> $GITHUB_ENV
 
   deploy-dev:
     name: Deploy to AWS, GCP, Azure
@@ -78,8 +89,18 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
 
-      - name: Build Java Project
-        run: mvn clean package
+      - name: Build Java Project (Verbose)
+        id: maven_package
+        run: |
+          echo "::group::Building with mvn clean package"
+          mvn clean package -e -X
+          echo "::endgroup::"
+
+      - name: Set Failure Context if Package Fails
+        if: failure()
+        run: |
+          echo "❌ Java package failed on 'dev' branch" >> $GITHUB_STEP_SUMMARY
+          echo "reason=Java Build Failed in dev branch" >> $GITHUB_ENV
 
       ####################
       ## AWS Deployment ##
@@ -94,7 +115,6 @@ jobs:
       - name: Deploy to AWS
         run: |
           echo "Deploying to AWS..."
-          # Replace with actual deployment (e.g., ECS, EB, S3)
           aws s3 cp target/*.jar s3://your-bucket-name/
 
       ####################
@@ -108,7 +128,7 @@ jobs:
       - name: Deploy to GCP
         run: |
           echo "Deploying to GCP..."
-          # Replace with actual deployment, e.g., GKE or Cloud Run
+          # Add your GCP deployment logic here
 
       #####################
       ## Azure Deployment ##
@@ -121,7 +141,13 @@ jobs:
       - name: Deploy to Azure
         run: |
           echo "Deploying to Azure..."
-          # Replace with actual deployment, e.g., Azure App Service CLI
+          # Add your Azure deployment logic here
+
+      - name: Set Failure Context if Deploy Fails
+        if: failure()
+        run: |
+          echo "❌ Deployment to one or more cloud platforms failed" >> $GITHUB_STEP_SUMMARY
+          echo "reason=Deployment Failed in dev branch" >> $GITHUB_ENV
 
   alert-on-failure:
     name: Alert on Failure
@@ -132,7 +158,7 @@ jobs:
       - name: Slack Notification
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data '{"text":"🚨 *Build/Deploy failed* in `${{ github.workflow }}` on branch `${{ github.ref_name }}`."}' \
+          --data "{\"text\":\"🚨 *Workflow Failed*: \`${{ env.reason || 'Unknown Reason' }}\`\n🔗 [View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\"}" \
           $SLACK_WEBHOOK_URL
 
       - name: Send Email Alert
@@ -142,11 +168,14 @@ jobs:
           server_port: 587
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "🚨 GitHub Action Failed: ${{ github.repository }}"
+          subject: "🚨 GitHub Action Failed: ${{ env.reason || 'Unknown Failure' }}"
           to: recipient@example.com
           from: "GitHub Alert <noreply@yourdomain.com>"
           body: |
             Hello,
 
-            The GitHub Actions workflow `${{ github.workflow }}` failed on branch `${{ github.ref_name }}`.
-            Please check the logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            The GitHub Actions workflow "${{ github.workflow }}" failed on branch "${{ github.ref_name }}".
+
+            Reason: ${{ env.reason || 'Unknown' }}
+
+            View logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
