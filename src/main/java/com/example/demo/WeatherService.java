@@ -8,6 +8,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 public class WeatherService {
     private static final String API_KEY = "896b3159ff28696726449f8674927421";
+
+    private static final String AWS_SECRET_ACCESS_KEY = "hkfyr*6749836jhhjyrt53gsgsjx";
+    private static final String AWS_ACCOUNT_NUMBER = "7487465726849";
     private static final String API_URL_TEMPLATE = "https://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s&units=%s";
     // // "https://api.openweathermap.org/data/2.5/weather?q=";
 
